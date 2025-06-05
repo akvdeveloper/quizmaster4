@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import axios from 'axios';
 import { Quiz, Question, QuizSession, ParticipantResult } from '../types';
 
 interface QuizState {
@@ -100,182 +101,209 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [state, dispatch] = useReducer(quizReducer, initialState);
 
   useEffect(() => {
-    const loadData = () => {
+    const loadData = async () => {
       try {
-        const savedQuizzes = localStorage.getItem('quizzes');
-        const savedSessions = localStorage.getItem('sessions');
+        dispatch({ type: 'SET_LOADING', payload: true });
         
-        if (savedQuizzes) {
-          dispatch({ type: 'SET_QUIZZES', payload: JSON.parse(savedQuizzes) });
-        }
-        
-        if (savedSessions) {
-          dispatch({ type: 'SET_SESSIONS', payload: JSON.parse(savedSessions) });
-        }
+        // Fetch quizzes from the backend
+        const quizzesResponse = await axios.get('http://localhost:5000/api/quizzes');
+        dispatch({ type: 'SET_QUIZZES', payload: quizzesResponse.data });
+
+        // Fetch sessions from the backend
+        const sessionsResponse = await axios.get('http://localhost:5000/api/sessions');
+        dispatch({ type: 'SET_SESSIONS', payload: sessionsResponse.data });
       } catch (error) {
-        console.error('Error loading data from localStorage:', error);
-        dispatch({ type: 'SET_ERROR', payload: 'Failed to load saved quizzes' });
+        console.error('Error loading data from backend:', error);
+        dispatch({ type: 'SET_ERROR', payload: 'Failed to load data' });
       } finally {
+        dispatch({ type: 'SET_LOADING', payload: false });
         dispatch({ type: 'SET_CONTEXT_LOADED', payload: true });
       }
     };
-    
+
     loadData();
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem('quizzes', JSON.stringify(state.quizzes));
-    console.log('Saved quizzes to localStorage:', state.quizzes);
-  }, [state.quizzes]);
-
-  useEffect(() => {
-    localStorage.setItem('sessions', JSON.stringify(state.sessions));
-    console.log('Saved sessions to localStorage:', state.sessions);
-  }, [state.sessions]);
-
+  
   const generateId = () => Math.random().toString(36).substring(2, 15);
 
-  const createQuiz = (quiz: Omit<Quiz, 'id'>) => {
-    const newQuiz: Quiz = {
-      ...quiz,
-      id: generateId(),
-      createdAt: new Date().toISOString()
-    };
-    
-    dispatch({ type: 'ADD_QUIZ', payload: newQuiz });
-    return newQuiz.id;
-  };
-
-  const updateQuiz = (quiz: Quiz) => {
-    dispatch({ type: 'UPDATE_QUIZ', payload: quiz });
-  };
-
-  const deleteQuiz = (quizId: string) => {
-    dispatch({ type: 'DELETE_QUIZ', payload: quizId });
-  };
-
-  const startSession = (quizId: string, isSolo: boolean): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const quiz = state.quizzes.find(q => q.id === quizId);
-      if (!quiz) {
-        dispatch({ type: 'SET_ERROR', payload: 'Quiz not found' });
-        reject(new Error('Quiz not found'));
-        return;
-      }
-  
-      const sessionId = generateId();
-      const newSession: QuizSession = {
-        id: sessionId,
-        quizId,
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        isSolo,
-        participants: [],
-        currentQuestionIndex: -1,
-        status: 'waiting',
-        results: []
+  const createQuiz = async (quiz: Omit<Quiz, 'id'>) => {
+    try {
+      const newQuiz: Quiz = {
+        ...quiz,
+        id: generateId(),
+        createdAt: new Date().toISOString()
       };
+      
+      const response = await axios.post('https://quizappserver-six.vercel.app/api/quizzes', newQuiz);
+      dispatch({ type: 'ADD_QUIZ', payload: response.data });
+      return newQuiz.id;
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to create quiz' });
+      throw error;
+    }
+  };
+
+  const updateQuiz = async (quiz: Quiz) => {
+    try {
+      const response = await axios.put(`https://quizappserver-six.vercel.app/api/quizzes/${quiz.id}`, quiz);
+      dispatch({ type: 'UPDATE_QUIZ', payload: response.data });
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to update quiz' });
+      throw error;
+    }
+  };
+
+  const deleteQuiz = async (quizId: string) => {
+    try {
+      await axios.delete(`https://quizappserver-six.vercel.app/api/quizzes/${quizId}`);
+      dispatch({ type: 'DELETE_QUIZ', payload: quizId });
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to delete quiz' });
+      throw error;
+    }
+  };
+
+  const startSession = async (quizId: string, isSolo: boolean): Promise<string> => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const quiz = state.quizzes.find(q => q.id === quizId);
+        if (!quiz) {
+          dispatch({ type: 'SET_ERROR', payload: 'Quiz not found' });
+          reject(new Error('Quiz not found'));
+          return;
+        }
   
-      dispatch({ type: 'ADD_SESSION', payload: newSession });
-      dispatch({ type: 'SET_CURRENT_SESSION', payload: newSession });
+        const sessionId = generateId();
+        const newSession: QuizSession = {
+          id: sessionId,
+          quizId,
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          isSolo,
+          participants: [],
+          currentQuestionIndex: -1,
+          status: 'waiting',
+          results: []
+        };
   
-      resolve(sessionId);
+        const response = await axios.post('https://quizappserver-six.vercel.app/api/sessions', newSession);
+        dispatch({ type: 'ADD_SESSION', payload: response.data });
+        dispatch({ type: 'SET_CURRENT_SESSION', payload: response.data });
+  
+        resolve(sessionId);
+      } catch (error) {
+        dispatch({ type: 'SET_ERROR', payload: 'Failed to start session' });
+        reject(error);
+      }
     });
   };
 
-  const submitAnswer = (
+  const submitAnswer = async (
     sessionId: string, 
     participantId: string, 
     questionId: string, 
     answer: string, 
     timeSpent: number
   ) => {
-    const session = state.sessions.find(s => s.id === sessionId);
-    const quiz = session ? state.quizzes.find(q => q.id === session.quizId) : null;
-    
-    if (!session || !quiz) {
-      dispatch({ type: 'SET_ERROR', payload: 'Session or quiz not found' });
-      return;
+    try {
+      const session = state.sessions.find(s => s.id === sessionId);
+      const quiz = session ? state.quizzes.find(q => q.id === session.quizId) : null;
+      
+      if (!session || !quiz) {
+        dispatch({ type: 'SET_ERROR', payload: 'Session or quiz not found' });
+        return;
+      }
+      
+      const question = quiz.questions.find(q => q.id === questionId);
+      if (!question) {
+        dispatch({ type: 'SET_ERROR', payload: 'Question not found' });
+        return;
+      }
+      
+      const isCorrect = question.correctAnswer === answer;
+      const baseScore = isCorrect ? 100 : 0;
+      const timeBonus = isCorrect ? Math.max(0, Math.floor((1 - timeSpent / question.timeLimit) * 50)) : 0;
+      const totalScore = baseScore + timeBonus;
+      
+      let updatedResults = [...session.results];
+      const existingResultIndex = updatedResults.findIndex(
+        r => r.participantId === participantId && r.questionId === questionId
+      );
+      
+      const answerResult: ParticipantResult = {
+        participantId,
+        questionId,
+        answer,
+        isCorrect,
+        timeSpent,
+        score: totalScore,
+        submittedAt: new Date().toISOString()
+      };
+      
+      if (existingResultIndex >= 0) {
+        updatedResults[existingResultIndex] = answerResult;
+      } else {
+        updatedResults.push(answerResult);
+      }
+      
+      const updatedSession = {
+        ...session,
+        results: updatedResults
+      };
+      
+      const response = await axios.put(`https://quizappserver-six.vercel.app/api/sessions/${sessionId}`, updatedSession);
+      dispatch({ type: 'UPDATE_SESSION', payload: response.data });
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to submit answer' });
     }
-    
-    const question = quiz.questions.find(q => q.id === questionId);
-    if (!question) {
-      dispatch({ type: 'SET_ERROR', payload: 'Question not found' });
-      return;
-    }
-    
-    const isCorrect = question.correctAnswer === answer;
-    const baseScore = isCorrect ? 100 : 0;
-    const timeBonus = isCorrect ? Math.max(0, Math.floor((1 - timeSpent / question.timeLimit) * 50)) : 0;
-    const totalScore = baseScore + timeBonus;
-    
-    let updatedResults = [...session.results];
-    const existingResultIndex = updatedResults.findIndex(
-      r => r.participantId === participantId && r.questionId === questionId
-    );
-    
-    const answerResult: ParticipantResult = {
-      participantId,
-      questionId,
-      answer,
-      isCorrect,
-      timeSpent,
-      score: totalScore,
-      submittedAt: new Date().toISOString()
-    };
-    
-    if (existingResultIndex >= 0) {
-      updatedResults[existingResultIndex] = answerResult;
-    } else {
-      updatedResults.push(answerResult);
-    }
-    
-    const updatedSession = {
-      ...session,
-      results: updatedResults
-    };
-    
-    dispatch({ type: 'UPDATE_SESSION', payload: updatedSession });
-    console.log('After submitAnswer, updated session:', updatedSession);
   };
 
-  const endSession = (sessionId: string) => {
-    const session = state.sessions.find(s => s.id === sessionId);
-    
-    if (!session) {
-      dispatch({ type: 'SET_ERROR', payload: 'Session not found' });
-      return;
+  const endSession = async (sessionId: string) => {
+    try {
+      const session = state.sessions.find(s => s.id === sessionId);
+      
+      if (!session) {
+        dispatch({ type: 'SET_ERROR', payload: 'Session not found' });
+        return;
+      }
+      
+      const updatedSession = {
+        ...session,
+        endedAt: new Date().toISOString(),
+        status: 'completed'
+      };
+      
+      const response = await axios.put(`https://quizappserver-six.vercel.app/api/sessions/${sessionId}`, updatedSession);
+      dispatch({ type: 'UPDATE_SESSION', payload: response.data });
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to end session' });
     }
-    
-    const updatedSession = {
-      ...session,
-      endedAt: new Date().toISOString(),
-      status: 'completed' as const
-    };
-    
-    dispatch({ type: 'UPDATE_SESSION', payload: updatedSession });
-    console.log('After endSession, updated session:', updatedSession);
   };
 
-  const importQuestions = (quizId: string, questions: Omit<Question, 'id'>[]) => {
-    const quiz = state.quizzes.find(q => q.id === quizId);
-    
-    if (!quiz) {
-      dispatch({ type: 'SET_ERROR', payload: 'Quiz not found' });
-      return;
+  const importQuestions = async (quizId: string, questions: Omit<Question, 'id'>[]) => {
+    try {
+      const quiz = state.quizzes.find(q => q.id === quizId);
+      
+      if (!quiz) {
+        dispatch({ type: 'SET_ERROR', payload: 'Quiz not found' });
+        return;
+      }
+      
+      const newQuestions: Question[] = questions.map(q => ({
+        ...q,
+        id: generateId()
+      }));
+      
+      const updatedQuiz = {
+        ...quiz,
+        questions: [...quiz.questions, ...newQuestions]
+      };
+      
+      const response = await axios.put(`https://quizappserver-six.vercel.app/api/quizzes/${quizId}`, updatedQuiz);
+      dispatch({ type: 'UPDATE_QUIZ', payload: response.data });
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to import questions' });
     }
-    
-    const newQuestions: Question[] = questions.map(q => ({
-      ...q,
-      id: generateId()
-    }));
-    
-    const updatedQuiz = {
-      ...quiz,
-      questions: [...quiz.questions, ...newQuestions]
-    };
-    
-    dispatch({ type: 'UPDATE_QUIZ', payload: updatedQuiz });
   };
 
   return (
