@@ -9,24 +9,23 @@ const ResultsPage: React.FC = () => {
   const { state } = useQuiz();
   const navigate = useNavigate();
   
-  const session = sessionId ? state.sessions.find(s => s.id === sessionId) : null;
-  const quiz = session ? state.quizzes.find(q => q.id === session.quizId) : null;
-  
   const [leaderboard, setLeaderboard] = useState<{id: string, name: string, score: number, correct: number}[]>([]);
 
-  console.log('Session in ResultsPage:', session);
-
+  // Wait for context to load before proceeding
   useEffect(() => {
     if (!state.isContextLoaded) return;
+
+    const session = sessionId ? state.sessions.find(s => s.id === sessionId) : null;
+    const quiz = session ? state.quizzes.find(q => q.id === session.quizId) : null;
 
     if (!session || !quiz) {
       navigate('/');
       return;
     }
 
+    // Calculate leaderboard based on session type
     if (session.isSolo) {
       const results = session.results.filter(r => r.participantId === 'solo-player');
-      console.log('Solo mode results for leaderboard:', results);
       const totalScore = results.reduce((sum, r) => sum + r.score, 0);
       const correctAnswers = results.filter(r => r.isCorrect).length;
       
@@ -39,6 +38,7 @@ const ResultsPage: React.FC = () => {
         }
       ]);
     } else {
+      // Multiplayer leaderboard
       const participantScores = new Map<string, {score: number, correct: number}>();
       
       session.results.forEach(result => {
@@ -62,7 +62,7 @@ const ResultsPage: React.FC = () => {
       leaderboardData.sort((a, b) => b.score - a.score);
       setLeaderboard(leaderboardData);
     }
-  }, [state.isContextLoaded, session, quiz, navigate]);
+  }, [state.isContextLoaded, sessionId, state.sessions, state.quizzes, navigate]);
 
   if (!state.isContextLoaded) {
     return (
@@ -71,6 +71,9 @@ const ResultsPage: React.FC = () => {
       </div>
     );
   }
+
+  const session = sessionId ? state.sessions.find(s => s.id === sessionId) : null;
+  const quiz = session ? state.quizzes.find(q => q.id === session.quizId) : null;
 
   if (!session || !quiz) {
     return (
@@ -111,7 +114,10 @@ const ResultsPage: React.FC = () => {
               <div className="text-3xl font-bold mb-1">
                 {leaderboard[0]?.score || 0}
               </div>
-              <div className="text-sm opacity-80">Your Score</div>
+              <div className="text-sm opacity-80">Your Final Score</div>
+              <div className="text-xs opacity-70 mt-1">
+                {leaderboard[0]?.correct || 0} out of {quiz.questions.length} correct
+              </div>
             </div>
           </div>
         ) : (

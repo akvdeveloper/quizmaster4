@@ -21,6 +21,7 @@ const QuizPlayPage: React.FC = () => {
   const [isTimerActive, setIsTimerActive] = useState(true);
   const [shuffledOptions, setShuffledOptions] = useState<string[]>([]);
   const [shuffledQuestions, setShuffledQuestions] = useState<Question[]>([]);
+  const [currentScore, setCurrentScore] = useState(0);
 
   if (!state.isContextLoaded) {
     return (
@@ -42,6 +43,17 @@ const QuizPlayPage: React.FC = () => {
       setShuffledQuestions(questionsToUse);
     }
   }, [quiz, shuffledQuestions.length]);
+
+  // Update current score whenever session results change
+  useEffect(() => {
+    if (session) {
+      const participantId = session.isSolo ? 'solo-player' : 'multiplayer-player';
+      const newScore = session.results
+        .filter(result => result.participantId === participantId)
+        .reduce((total, result) => total + result.score, 0);
+      setCurrentScore(newScore);
+    }
+  }, [session?.results, session?.isSolo]);
 
   const getCurrentQuestion = useCallback((): Question | null => {
     if (!shuffledQuestions || shuffledQuestions.length === 0) return null;
@@ -91,11 +103,24 @@ const QuizPlayPage: React.FC = () => {
   const currentQuestion = getCurrentQuestion();
   const participantId = session.isSolo ? 'solo-player' : 'multiplayer-player';
 
+  const calculateScore = (answer: string, timeSpent: number, question: Question): number => {
+    const isCorrect = question.correctAnswer === answer;
+    const baseScore = isCorrect ? 100 : 0;
+    const timeBonus = isCorrect ? Math.max(0, Math.floor((1 - timeSpent / question.timeLimit) * 50)) : 0;
+    return baseScore + timeBonus;
+  };
+
   const proceedToNextQuestion = useCallback(async () => {
     if (!currentQuestion || !sessionId) return;
     
     const finalAnswer = selectedAnswer || ''; 
     const finalTimeSpent = timeSpent || Math.round((Date.now() - startTime) / 1000);
+    
+    // Calculate the score for this question
+    const questionScore = calculateScore(finalAnswer, finalTimeSpent, currentQuestion);
+    
+    // Update the current score immediately for visual feedback
+    setCurrentScore(prevScore => prevScore + questionScore);
     
     try {
       // Submit the answer and wait for it to complete
@@ -120,6 +145,8 @@ const QuizPlayPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Error submitting answer:', error);
+      // Revert the score if submission failed
+      setCurrentScore(prevScore => prevScore - questionScore);
     }
   }, [
     currentQuestion, 
@@ -200,11 +227,6 @@ const QuizPlayPage: React.FC = () => {
 
   const hasSelectedAnswer = selectedAnswer !== null;
 
-  // Calculate current score from session results
-  const currentScore = session.results
-    .filter(result => result.participantId === participantId)
-    .reduce((total, result) => total + result.score, 0);
-
   return (
     <div className="max-w-3xl mx-auto">
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
@@ -227,7 +249,9 @@ const QuizPlayPage: React.FC = () => {
             )}
             <div className="flex items-center text-gray-700 dark:text-gray-300">
               <Award size={18} className="mr-1" />
-              <span>Score: {currentScore}</span>
+              <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                Score: {currentScore}
+              </span>
             </div>
           </div>
         </div>
@@ -291,17 +315,22 @@ const QuizPlayPage: React.FC = () => {
           {isRevealed && session.isSolo && (
             <div className="text-center">
               <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-                <p className="text-sm text-gray-600 dark:text-gray-300">
-                  {selectedAnswer === currentQuestion.correctAnswer ? (
-                    <span className="text-green-600 dark:text-green-400 font-medium">
-                      ✓ Correct! Moving to next question...
-                    </span>
-                  ) : (
-                    <span className="text-red-600 dark:text-red-400 font-medium">
-                      ✗ Incorrect. The correct answer was: {currentQuestion.correctAnswer}
-                    </span>
-                  )}
-                </p>
+                <div className="mb-2">
+                  <p className="text-sm text-gray-600 dark:text-gray-300">
+                    {selectedAnswer === currentQuestion.correctAnswer ? (
+                      <span className="text-green-600 dark:text-green-400 font-medium">
+                        ✓ Correct! +{calculateScore(selectedAnswer, timeSpent, currentQuestion)} points
+                      </span>
+                    ) : (
+                      <span className="text-red-600 dark:text-red-400 font-medium">
+                        ✗ Incorrect. The correct answer was: {currentQuestion.correctAnswer}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  Moving to next question...
+                </div>
               </div>
             </div>
           )}
