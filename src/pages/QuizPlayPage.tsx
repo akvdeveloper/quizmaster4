@@ -20,6 +20,7 @@ const QuizPlayPage: React.FC = () => {
   const [startTime, setStartTime] = useState(Date.now());
   const [isTimerActive, setIsTimerActive] = useState(true);
   const [shuffledOptions, setShuffledOptions] = useState<string[]>([]);
+  const [shuffledQuestions, setShuffledQuestions] = useState<Question[]>([]);
 
   if (!state.isContextLoaded) {
     return (
@@ -32,18 +33,21 @@ const QuizPlayPage: React.FC = () => {
   const session = sessionId ? state.sessions.find(s => s.id === sessionId) : null;
   const quiz = session ? state.quizzes.find(q => q.id === session.quizId) : null;
   
-  console.log('Session in QuizPlayPage:', session);
+  // Initialize shuffled questions once when component mounts
+  useEffect(() => {
+    if (quiz && quiz.questions && shuffledQuestions.length === 0) {
+      const questionsToUse = quiz.settings.shuffleQuestions 
+        ? [...quiz.questions].sort(() => Math.random() - 0.5)
+        : quiz.questions;
+      setShuffledQuestions(questionsToUse);
+    }
+  }, [quiz, shuffledQuestions.length]);
 
   const getCurrentQuestion = useCallback((): Question | null => {
-    if (!quiz || !quiz.questions || quiz.questions.length === 0) return null;
-    
-    const questionsToUse = quiz.settings.shuffleQuestions 
-      ? [...quiz.questions].sort(() => Math.random() - 0.5)
-      : quiz.questions;
-    
-    if (currentQuestionIndex >= questionsToUse.length) return null;
-    return questionsToUse[currentQuestionIndex];
-  }, [quiz, currentQuestionIndex]);
+    if (!shuffledQuestions || shuffledQuestions.length === 0) return null;
+    if (currentQuestionIndex >= shuffledQuestions.length) return null;
+    return shuffledQuestions[currentQuestionIndex];
+  }, [shuffledQuestions, currentQuestionIndex]);
   
   useEffect(() => {
     const question = getCurrentQuestion();
@@ -59,7 +63,6 @@ const QuizPlayPage: React.FC = () => {
       setTimeSpent(0);
       setStartTime(Date.now());
       setIsTimerActive(true);
-      console.log('Reset for question', currentQuestionIndex + 1, ': selectedAnswer:', null, 'startTime:', Date.now());
     }
   }, [getCurrentQuestion, currentQuestionIndex]);
 
@@ -86,45 +89,51 @@ const QuizPlayPage: React.FC = () => {
   }
 
   const currentQuestion = getCurrentQuestion();
-
   const participantId = session.isSolo ? 'solo-player' : 'multiplayer-player';
 
-  const proceedToNextQuestion = useCallback(() => {
+  const proceedToNextQuestion = useCallback(async () => {
     if (!currentQuestion || !sessionId) return;
     
-    const finalAnswer = selectedAnswer || ''; // Ensure answer is not null
-    const finalTimeSpent = timeSpent || Math.round((Date.now() - startTime) / 1000); // Fallback if timeSpent not set
+    const finalAnswer = selectedAnswer || ''; 
+    const finalTimeSpent = timeSpent || Math.round((Date.now() - startTime) / 1000);
     
-    console.log('Proceeding to next question:', {
-      questionIndex: currentQuestionIndex + 1,
-      selectedAnswer: finalAnswer,
-      timeSpent: finalTimeSpent,
-      participantId
-    });
-    
-    console.log('Results before submitAnswer in QuizPlayPage:', session.results);
-    
-    submitAnswer(
-      sessionId,
-      participantId,
-      currentQuestion.id,
-      finalAnswer,
-      finalTimeSpent
-    );
+    try {
+      // Submit the answer and wait for it to complete
+      await submitAnswer(
+        sessionId,
+        participantId,
+        currentQuestion.id,
+        finalAnswer,
+        finalTimeSpent
+      );
 
-    console.log('Results after submitAnswer in QuizPlayPage:', session.results);
-
-    if (currentQuestionIndex < quiz.questions.length - 1) {
-      setCurrentQuestionIndex(currentQuestionIndex + 1);
-    } else {
-      endSession(sessionId);
-      console.log('Results after endSession in QuizPlayPage:', session.results);
-      setTimeout(() => {
-        console.log('Navigating to results page, final results:', session.results);
-        navigate(`/results/${sessionId}`);
-      }, 500); // Increased delay to ensure state persistence
+      // Move to next question or finish quiz
+      if (currentQuestionIndex < shuffledQuestions.length - 1) {
+        setCurrentQuestionIndex(currentQuestionIndex + 1);
+      } else {
+        // End the session and navigate to results
+        await endSession(sessionId);
+        // Small delay to ensure state is updated
+        setTimeout(() => {
+          navigate(`/results/${sessionId}`);
+        }, 100);
+      }
+    } catch (error) {
+      console.error('Error submitting answer:', error);
     }
-  }, [currentQuestion, sessionId, selectedAnswer, timeSpent, startTime, currentQuestionIndex, quiz, endSession, navigate, submitAnswer, session.results, participantId]);
+  }, [
+    currentQuestion, 
+    sessionId, 
+    selectedAnswer, 
+    timeSpent, 
+    startTime, 
+    currentQuestionIndex, 
+    shuffledQuestions.length, 
+    endSession, 
+    navigate, 
+    submitAnswer, 
+    participantId
+  ]);
 
   const handleSelectAnswer = (answer: string) => {
     if (isRevealed) return;
@@ -134,19 +143,14 @@ const QuizPlayPage: React.FC = () => {
     setTimeSpent(calculatedTimeSpent);
     setIsTimerActive(false);
     
-    console.log('Answer selected:', {
-      answer,
-      timeSpent: calculatedTimeSpent,
-      startTime,
-      currentTime: Date.now()
-    });
-    
+    // Show the correct answer after a brief delay
     setTimeout(() => {
       setIsRevealed(true);
+      // For solo mode, automatically proceed to next question
       if (session.isSolo) {
         setTimeout(() => {
           proceedToNextQuestion();
-        }, 1500);
+        }, 2000); // Give user time to see the correct answer
       }
     }, 500);
   };
@@ -156,19 +160,15 @@ const QuizPlayPage: React.FC = () => {
     
     const calculatedTimeSpent = currentQuestion?.timeLimit || 30;
     setTimeSpent(calculatedTimeSpent);
-    setSelectedAnswer(selectedAnswer || ''); // Ensure answer is recorded even if null
+    setSelectedAnswer(selectedAnswer || ''); 
     setIsTimerActive(false);
     setIsRevealed(true);
     
-    console.log('Timer expired:', {
-      selectedAnswer: selectedAnswer || '',
-      timeSpent: calculatedTimeSpent
-    });
-    
+    // For solo mode, automatically proceed to next question
     if (session.isSolo) {
       setTimeout(() => {
         proceedToNextQuestion();
-      }, 1500);
+      }, 2000);
     }
   };
 
@@ -200,6 +200,7 @@ const QuizPlayPage: React.FC = () => {
 
   const hasSelectedAnswer = selectedAnswer !== null;
 
+  // Calculate current score from session results
   const currentScore = session.results
     .filter(result => result.participantId === participantId)
     .reduce((total, result) => total + result.score, 0);
@@ -233,13 +234,13 @@ const QuizPlayPage: React.FC = () => {
         
         <div className="mb-2">
           <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-1">
-            <span>Question {currentQuestionIndex + 1} of {quiz.questions.length}</span>
-            <span>Progress: {Math.round(((currentQuestionIndex) / quiz.questions.length) * 100)}%</span>
+            <span>Question {currentQuestionIndex + 1} of {shuffledQuestions.length}</span>
+            <span>Progress: {Math.round(((currentQuestionIndex) / shuffledQuestions.length) * 100)}%</span>
           </div>
           <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
             <div 
               className="h-full bg-gradient-to-r from-indigo-500 to-indigo-700 transition-all duration-300"
-              style={{ width: `${((currentQuestionIndex) / quiz.questions.length) * 100}%` }}
+              style={{ width: `${((currentQuestionIndex) / shuffledQuestions.length) * 100}%` }}
             />
           </div>
         </div>
@@ -249,7 +250,7 @@ const QuizPlayPage: React.FC = () => {
         <div className="p-6">
           <div className="mb-6">
             <Timer 
-              key={currentQuestionIndex}
+              key={`${currentQuestionIndex}-${startTime}`}
               duration={currentQuestion.timeLimit} 
               onTimeUp={handleTimeUp}
               isActive={isTimerActive}
@@ -263,7 +264,7 @@ const QuizPlayPage: React.FC = () => {
           <div className="space-y-3 mb-8">
             {shuffledOptions.map((option, index) => (
               <OptionButton
-                key={index}
+                key={`${currentQuestionIndex}-${index}-${option}`}
                 label={option}
                 index={index}
                 isSelected={selectedAnswer === option}
@@ -282,8 +283,26 @@ const QuizPlayPage: React.FC = () => {
                 onClick={handleNextQuestion}
                 className="inline-flex items-center px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
               >
-                {currentQuestionIndex < quiz.questions.length - 1 ? 'Next Question' : 'Finish Quiz'}
+                {currentQuestionIndex < shuffledQuestions.length - 1 ? 'Next Question' : 'Finish Quiz'}
               </button>
+            </div>
+          )}
+          
+          {isRevealed && session.isSolo && (
+            <div className="text-center">
+              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  {selectedAnswer === currentQuestion.correctAnswer ? (
+                    <span className="text-green-600 dark:text-green-400 font-medium">
+                      ✓ Correct! Moving to next question...
+                    </span>
+                  ) : (
+                    <span className="text-red-600 dark:text-red-400 font-medium">
+                      ✗ Incorrect. The correct answer was: {currentQuestion.correctAnswer}
+                    </span>
+                  )}
+                </p>
+              </div>
             </div>
           )}
         </div>
